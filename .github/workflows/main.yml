@@ -5,13 +5,13 @@ on:
     # 5時間ごとに起動 (UTC 0, 5, 10, 15, 20時...)
     # 日本時間(JST)では 9, 14, 19, 0, 5時... に相当
     - cron: '0 */5 * * *'
-  workflow_dispatch: # ボタンから手動で即時起動可能
+  workflow_dispatch: # 手動起動用ボタン
 
 jobs:
   run-periodic-bot:
     runs-on: ubuntu-latest
     
-    # 記憶（last_video_id.txt）と設定（config.json）をリポジトリに保存するための書き込み権限
+    # 権限設定: データの自動保存(git push)に必要
     permissions:
       contents: write
 
@@ -19,7 +19,6 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          # 最新の履歴を反映させるため、常に最新を取得
           fetch-depth: 1
 
       - name: Set up Python
@@ -30,26 +29,36 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install discord.py feedparser
+          # requirements.txtが存在する場合のみ、一括インストールを実行
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            # 予備的なフォールバック（もしファイルが読み込めない場合）
+            pip install discord.py feedparser pytz
+          fi
+          # インストール済みリストを表示（デバッグ用）
+          pip list
 
       - name: Run Bot
         env:
-          # GitHub Secretsに保存したトークンを環境変数に渡す
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        # 実行中に万が一エラーが起きても、次の「データ同期」ステップへ進むように設定
+        continue-on-error: true
         run: python main.py
 
       - name: Sync Memory and Config to Repository
-        # プログラム終了後（5.5時間後）、動画IDと管理者による設定をGitにコミットして保存
+        # プログラムが終了した際、最新の状態をリポジトリへ保存
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # 動画IDと設定ファイルの両方をステージングに追加
-          git add last_video_id.txt config.json
+          # 存在する可能性のある全データファイルをステージング
+          # ファイルが存在しなくてもエラーにならないように設定
+          git add last_video_id.txt config.json logs/*.log || true
           
-          # 変更（動画更新 or スラッシュコマンドによる設定変更）がある場合のみコミット
+          # 変更がある場合のみコミットとプッシュ
           if ! git diff --cached --exit-code; then
-            git commit -m "docs: sync last video id and config [skip ci]"
+            git commit -m "docs: sync system data and logs [skip ci]"
             git push
           else
             echo "No changes in data files. Skipping push."
