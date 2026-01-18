@@ -3,16 +3,18 @@ from discord.ext import commands
 import os
 import asyncio
 import logging
+import traceback
 
-# ログの設定（Actionsのログで動作を確認しやすくするため）
-logging.basicConfig(level=logging.INFO)
+# 1. ログの設定（Actionsのコンソールでエラーを追いやすくする）
+logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
+logger = logging.getLogger('RbBot')
 
 class RbBot(commands.Bot):
     def __init__(self):
-        # 必要なインテントをすべて有効化
+        # 必要な権限（Intents）の設定
         intents = discord.Intents.default()
-        intents.message_content = True
-        intents.members = True # メンバー管理等が必要な場合のため
+        intents.message_content = True  # メッセージ内容の取得
+        intents.members = True          # メンバー情報の取得
         
         super().__init__(
             command_prefix="!", 
@@ -20,35 +22,53 @@ class RbBot(commands.Bot):
             help_command=None
         )
         
-        # 開発拠点（瑞典技術設計局）のギルドID
+        # 開発拠点：瑞典技術設計局 のギルドID
         self.dev_guild_id = 1372567395419291698
 
     async def setup_hook(self):
-        """Bot起動時に実行される初期設定"""
-        # Cogsの読み込み
-        # ファイルパスは 'cogs.youtube_monitor' と想定
-        await self.load_extension("cogs.youtube_monitor")
+        """Bot起動時に一度だけ実行される初期設定"""
+        logger.info("--- Starting Cog Loading Sequence ---")
         
-        # 開発用ギルドへのスラッシュコマンド同期（即時反映用）
+        # cogs フォルダ内の Python ファイルを自動的にロード
+        # 将来的に cogs/twitter.py などが増えても自動で認識されます
+        target_cog = "cogs.youtube_monitor"
+        try:
+            await self.load_extension(target_cog)
+            logger.info(f"Successfully loaded extension: {target_cog}")
+        except Exception as e:
+            logger.error(f"Failed to load extension {target_cog}.")
+            traceback.print_exc()
+
+        # スラッシュコマンドの同期設定
         dev_guild = discord.Object(id=self.dev_guild_id)
+        
+        # 開発サーバーへの即時反映用コピー
         self.tree.copy_global_to(guild=dev_guild)
         await self.tree.sync(guild=dev_guild)
         
-        # グローバル同期（他サーバー用、反映に時間がかかる）
+        # 全サーバーへのグローバル同期（反映には時間がかかります）
         await self.tree.sync()
         
-        print(f"Commands synced to Guild: {self.dev_guild_id}")
+        logger.info(f"Slash commands synced to Guild: {self.dev_guild_id}")
 
     async def on_ready(self):
-        print(f"--- Rb m/26S Online ---")
-        print(f"Logged in as: {self.user.name}")
-        print(f"Node: 瑞典技術設計局 (Dev-Base)")
+        """BotがDiscordに接続した際の処理"""
+        logger.info(f"--- Rb m/26S System Online ---")
+        logger.info(f"Logged in as: {self.user} (ID: {self.user.id})")
+        logger.info(f"Base of Operations: 瑞典技術設計局")
         
-        # 5.5時間 (19,800秒) のカウントダウン開始
-        # この時間が経過すると、次のGitHub Actionsへバトンタッチするために終了する
+        # 5.5時間 (19,800秒) のタイマーを開始
+        # GitHub Actionsの6時間制限に抵触する前に安全に終了させる
+        logger.info("Cycle timer started: 5.5 hours remaining.")
         await asyncio.sleep(19800)
-        print("Cycle limit reached. Syncing memory and rotating instance...")
+        
+        logger.info("Duty cycle completed. Initiating graceful shutdown for rotation...")
         await self.close()
+
+    async def on_error(self, event, *args, **kwargs):
+        """グローバルエラーハンドリング"""
+        logger.error(f"Event Error: {event}")
+        traceback.print_exc()
 
 if __name__ == "__main__":
     bot = RbBot()
@@ -58,6 +78,6 @@ if __name__ == "__main__":
         try:
             bot.run(token)
         except Exception as e:
-            print(f"Fatal Error: {e}")
+            logger.critical(f"Bot failed to start: {e}")
     else:
-        print("Error: DISCORD_TOKEN is not set in Environment Variables.")
+        logger.critical("DISCORD_TOKEN is missing from Environment Variables.")
