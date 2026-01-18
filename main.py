@@ -3,86 +3,129 @@ from discord.ext import commands
 import os
 import asyncio
 import logging
-import traceback
+import logging.handlers
+from datetime import datetime
+import pytz
 
-# ログの設定（Actionsの実行ログからエラーを特定しやすくする）
-logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
-logger = logging.getLogger('RbBot')
+# 1. 高度なロギング設定 (Debugging Perfection)
+# ログフォルダが存在しない場合は作成
+if not os.path.exists('logs'):
+    os.makedirs('logs')
 
-class RbBot(commands.Bot):
+# ログのフォーマット設定（日付、レベル、メッセージ）
+formatter = logging.Formatter(
+    fmt='[{asctime}] [{levelname:<8}] {name}: {message}',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    style='{'
+)
+
+# コンソールへの出力設定
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+console_handler.setLevel(logging.INFO)
+
+# ファイルへの出力設定（ローテーション機能付き：ログが増えすぎないよう管理）
+file_handler = logging.handlers.RotatingFileHandler(
+    filename='logs/system.log',
+    encoding='utf-8',
+    maxBytes=5 * 1024 * 1024,  # 5MBごとに新しいファイルへ
+    backupCount=5              # 最新5世代まで保存
+)
+file_handler.setFormatter(formatter)
+file_handler.setLevel(logging.DEBUG) # ファイルには詳細なデバッグ情報を残す
+
+# ルートロガーの設定
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+logger.addHandler(console_handler)
+logger.addHandler(file_handler)
+
+# Discordライブラリ自体のログも調整
+logging.getLogger('discord').setLevel(logging.WARNING)
+
+
+class SwedishTechBot(commands.Bot):
     def __init__(self):
-        # 権限(Intents)の定義
+        # 2. 必要な権限（Intents）の確保
         intents = discord.Intents.default()
-        intents.message_content = True  # メッセージ読み取り権限
-        intents.members = True          # メンションやロール操作用
+        intents.message_content = True # メッセージ内容の読み取り
+        intents.members = True         # メンバー情報の取得（JoinTracker等で使用）
+        intents.invites = True         # 招待情報の取得（JoinTrackerで使用）
         
         super().__init__(
-            command_prefix="!", 
+            command_prefix="!", # Slash Commandメインだが、緊急用として設定
             intents=intents,
-            help_command=None
+            help_command=None   # デフォルトのヘルプは無効化（自作UIへ移行のため）
         )
-        
-        # 開発拠点：瑞典技術設計局 (Guild ID)
-        self.dev_guild_id = 1372567395419291698
+        self.jst = pytz.timezone('Asia/Tokyo')
 
     async def setup_hook(self):
-        """Bot起動時の初期化シーケンス"""
-        logger.info("--- Initializing Systems ---")
+        """起動時の初期化処理：Cogsのロードとコマンド同期"""
+        logger.info("Initializing system modules...")
         
-        # cogsフォルダ内のファイルを自動探索してロード
-        # これにより ping.py や youtube_monitor.py が自動的に読み込まれます
-        cog_dir = "./cogs"
-        if os.path.exists(cog_dir):
-            for filename in os.listdir(cog_dir):
-                if filename.endswith(".py") and not filename.startswith("__"):
-                    cog_name = f"cogs.{filename[:-3]}"
+        # cogsフォルダ内の拡張機能を自動ロード
+        loaded_cogs = 0
+        if os.path.exists('./cogs'):
+            for filename in os.listdir('./cogs'):
+                if filename.endswith('.py'):
                     try:
-                        await self.load_extension(cog_name)
-                        logger.info(f"Module Loaded: {cog_name}")
+                        await self.load_extension(f'cogs.{filename[:-3]}')
+                        logger.info(f'Module Loaded: {filename}')
+                        loaded_cogs += 1
                     except Exception as e:
-                        logger.error(f"Failed to load {cog_name}: {e}")
-                        traceback.print_exc()
+                        logger.error(f'Failed to load extension {filename}: {e}', exc_info=True)
         else:
-            logger.warning("Warning: 'cogs' directory not found.")
+            logger.warning("'cogs' directory not found. Running without extensions.")
 
-        # スラッシュコマンドの同期
-        # 開発サーバーへの即時反映用
-        dev_guild = discord.Object(id=self.dev_guild_id)
-        self.tree.copy_global_to(guild=dev_guild)
-        await self.tree.sync(guild=dev_guild)
+        # スラッシュコマンドの同期（サーバーへの登録）
+        logger.info("Syncing application commands...")
+        try:
+            synced = await self.tree.sync()
+            logger.info(f'Command Tree Synced: {len(synced)} commands active.')
+        except Exception as e:
+            logger.error(f'Failed to sync command tree: {e}', exc_info=True)
         
-        # 全サーバーへのグローバル同期（反映に最大1時間程度）
-        await self.tree.sync()
-        
-        logger.info(f"Slash commands synchronized to Dev-Base: {self.dev_guild_id}")
+        logger.info(f"Setup complete. {loaded_cogs} modules loaded.")
 
     async def on_ready(self):
-        """オンライン接続時の処理"""
-        logger.info(f"--- Rb m/26S Online ---")
-        logger.info(f"Logged in as: {self.user} (ID: {self.user.id})")
+        """ボット起動完了時のイベント"""
         
-        # 5.5時間 (19,800秒) の運用サイクルを開始
-        # GitHub Actionsの制限時間を考慮し、自動でバトンタッチする設計
-        logger.info("Starting 5.5-hour operational cycle...")
-        await asyncio.sleep(19800)
+        # 3. ステータスとアクティビティの設定
+        # ステータス: 退席中 (Idle)
+        # メッセージ: "Made by Mizunori.TDB"
+        await self.change_presence(
+            status=discord.Status.idle,
+            activity=discord.Game(name="Made by Mizunori.TDB")
+        )
         
-        logger.info("Operational cycle limit reached. Initiating automatic shutdown.")
-        await self.close()
+        now = datetime.now(self.jst).strftime('%Y-%m-%d %H:%M:%S')
+        logger.info(f'--------------------------------------------------')
+        logger.info(f'Logged in as: {self.user.name} (ID: {self.user.id})')
+        logger.info(f'System Time : {now} JST')
+        logger.info(f'Status Set  : Idle (退席中)')
+        logger.info(f'Activity Set: "Made by Mizunori.TDB"')
+        logger.info(f'--------------------------------------------------')
+        logger.info('Rb m/26S is fully operational and standing by.')
 
-    async def on_error(self, event, *args, **kwargs):
-        """システムエラーログ"""
-        logger.error(f"Critical Event Error: {event}")
-        traceback.print_exc()
-
-if __name__ == "__main__":
-    # 環境変数からトークンを取得
-    token = os.getenv("DISCORD_TOKEN")
+# 4. エントリポイント
+async def main():
+    bot = SwedishTechBot()
     
-    if token:
-        bot = RbBot()
-        try:
-            bot.run(token)
-        except Exception as e:
-            logger.critical(f"System failed to start: {e}")
-    else:
-        logger.critical("Error: DISCORD_TOKEN is not defined in GitHub Secrets.")
+    # トークンの取得（環境変数推奨）
+    token = os.getenv('DISCORD_TOKEN')
+    
+    if not token:
+        logger.critical("DISCORD_TOKEN environment variable is not set.")
+        return
+
+    async with bot:
+        await bot.start(token)
+
+if __name__ == '__main__':
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        # Ctrl+C 等で停止した場合のクリーンアップ
+        logger.info("System shutdown requested by user.")
+    except Exception as e:
+        logger.critical(f"Fatal error: {e}", exc_info=True)
