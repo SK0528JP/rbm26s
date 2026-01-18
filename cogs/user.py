@@ -10,7 +10,7 @@ class UserInspector(commands.Cog):
         self.stb_blue = 0x4285F4
         self.jst = pytz.timezone('Asia/Tokyo')
 
-    @app_commands.command(name="user-inspect", description="ユーザーの詳細情報（ステータス・アクティビティ・デバイス等）を解析します。")
+    @app_commands.command(name="user", description="ユーザーの詳細情報（ステータス・アクティビティ・デバイス等）を解析します。")
     @app_commands.describe(member="解析対象のユーザー")
     async def inspect(self, interaction: discord.Interaction, member: discord.Member = None):
         """ユーザー情報の完全解析（プレゼンス・デバイス・アイコン対応版）"""
