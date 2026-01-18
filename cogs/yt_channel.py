@@ -47,7 +47,7 @@ class YouTubeChannel(commands.Cog):
             embed = discord.Embed(
                 title=f"📺 {channel_name} - Official Channel",
                 description=(
-                    f"瑞典技術設計局の最新コンテンツを配信中。\n"
+                    f"最新コンテンツを配信中。\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"**【 チャンネル最新情報 】**"
                 ),
@@ -69,7 +69,7 @@ class YouTubeChannel(commands.Cog):
                 inline=True
             )
             embed.add_field(
-                name="🎬 最新のアップロード", 
+                name="🎬 最新の動画", 
                 value=f"**{latest_video_title}**", 
                 inline=False
             )
