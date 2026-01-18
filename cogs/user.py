@@ -10,134 +10,144 @@ class UserInspector(commands.Cog):
         self.stb_blue = 0x4285F4
         self.jst = pytz.timezone('Asia/Tokyo')
 
-    @app_commands.command(name="user-inspect", description="指定されたユーザーのあらゆる公開情報を詳細に解析します。")
-    @app_commands.describe(member="解析対象のユーザー（メンションまたはID）")
+    @app_commands.command(name="user-inspect", description="ユーザーの詳細情報（ステータス・アクティビティ・デバイス等）を解析します。")
+    @app_commands.describe(member="解析対象のユーザー")
     async def inspect(self, interaction: discord.Interaction, member: discord.Member = None):
-        """ユーザーに関する公開データを極限まで抽出します。"""
+        """ユーザー情報の完全解析（プレゼンス・デバイス・アイコン対応版）"""
+        
+        # 1. 処理中メッセージ
+        process_embed = discord.Embed(
+            description="🔄 ユーザープロファイルをスキャン中...",
+            color=self.stb_blue
+        )
+        await interaction.response.send_message(embed=process_embed)
+
         target = member or interaction.user
         
-        # 1. 時間データの解析（JST換算と経過日数）
+        # --- データ解析セクション ---
+
+        # 1. 時間計算
         now = datetime.now(pytz.utc)
         created_delta = (now - target.created_at).days
         joined_delta = (now - target.joined_at).days
 
-        # 2. ロール情報の詳細
-        # 役職順にソートし、@everyoneを除外
+        # 2. ロール（@everyone除外・上位表示）
         roles = sorted(target.roles, key=lambda r: r.position, reverse=True)
         role_mentions = [r.mention for r in roles if r != interaction.guild.default_role]
         role_display = " ".join(role_mentions) if role_mentions else "なし"
 
-        # 3. 権限（パーミッション）の抽出
-        # 重要な権限をピックアップして表示
-        important_perms = []
-        perms = dict(target.guild_permissions)
-        key_perms = {
-            "administrator": "管理者",
-            "manage_guild": "サーバー管理",
-            "manage_channels": "チャンネル管理",
-            "manage_roles": "ロール管理",
-            "manage_messages": "メッセージ管理",
-            "mention_everyone": "全員メンション",
-            "mute_members": "メンバーミュート",
-            "kick_members": "キック権限",
-            "ban_members": "BAN権限"
-        }
-        for codename, jpname in key_perms.items():
-            if perms.get(codename):
-                important_perms.append(f"`{jpname}`")
-        
-        perm_display = " ".join(important_perms) if important_perms else "一般権限"
+        # 3. デバイス状態の正確な取得
+        clients = []
+        if str(target.desktop_status) != 'offline': clients.append("🖥️ Desktop")
+        if str(target.mobile_status) != 'offline': clients.append("📱 Mobile")
+        if str(target.web_status) != 'offline': clients.append("🌐 Web")
+        client_display = " / ".join(clients) if clients else "⚫ Offline"
 
-        # 4. バッジ（フラグ）の解析
+        # 4. アクティビティ（ゲーム・Spotify・カスタムステータス）の解析
+        activities = []
+        # カスタムステータス
+        for activity in target.activities:
+            if isinstance(activity, discord.CustomActivity):
+                emoji = f"{activity.emoji} " if activity.emoji else ""
+                name = activity.name if activity.name else ""
+                activities.append(f"💭 **ステータス:** {emoji}{name}")
+            elif isinstance(activity, discord.Spotify):
+                activities.append(f"🎵 **Spotify:** {activity.title} / {activity.artist}")
+            elif isinstance(activity, discord.Game):
+                activities.append(f"🎮 **Game:** {activity.name}")
+            elif isinstance(activity, discord.Streaming):
+                activities.append(f"📡 **Streaming:** {activity.name}")
+            elif activity.type == discord.ActivityType.listening and not isinstance(activity, discord.Spotify):
+                activities.append(f"🎧 **Listening:** {activity.name}")
+            elif activity.type == discord.ActivityType.watching:
+                activities.append(f"📺 **Watching:** {activity.name}")
+
+        activity_display = "\n".join(activities) if activities else "アクティビティなし"
+
+        # 5. バッジ（パブリックフラグ）の完全取得
         flags = []
-        user_flags = target.public_flags
-        if user_flags.staff: flags.append("Discord Staff")
-        if user_flags.partner: flags.append("Partnered Server Owner")
-        if user_flags.hypesquad: flags.append("HypeSquad Events")
-        if user_flags.bug_hunter: flags.append("Bug Hunter (Green)")
-        if user_flags.bug_hunter_level_2: flags.append("Bug Hunter (Gold)")
-        if user_flags.early_supporter: flags.append("Early Supporter")
-        if user_flags.verified_bot_developer: flags.append("Verified Bot Dev")
-        if user_flags.active_developer: flags.append("Active Developer")
+        uf = target.public_flags
+        if uf.staff: flags.append("<:staff:1> Discord Staff") # 必要なら絵文字IDを入れる、ここはテキストで代用
+        if uf.partner: flags.append("Partner")
+        if uf.hypesquad: flags.append("HypeSquad Events")
+        if uf.bug_hunter: flags.append("Bug Hunter (Green)")
+        if uf.bug_hunter_level_2: flags.append("Bug Hunter (Gold)")
+        if uf.early_supporter: flags.append("Early Supporter")
+        if uf.verified_bot_developer: flags.append("Bot Developer")
+        if uf.active_developer: flags.append("Active Developer")
+        # HypeSquad Houses
+        if uf.hypesquad_balance: flags.append("HypeSquad Balance")
+        if uf.hypesquad_bravery: flags.append("HypeSquad Bravery")
+        if uf.hypesquad_brilliance: flags.append("HypeSquad Brilliance")
         
         flag_display = ", ".join(flags) if flags else "なし"
 
-        # 5. ステータスとアクティビティ
+        # 6. ステータス表示（全体）
         status_map = {
             discord.Status.online: "🟢 オンライン",
             discord.Status.idle: "🌙 退席中",
             discord.Status.dnd: "⛔ 取り込み中",
             discord.Status.offline: "⚪ オフライン"
         }
-        status_text = status_map.get(target.status, "不明")
+        main_status = status_map.get(target.status, "不明")
 
-        # 6. デザイン構成（Embed）
+
+        # --- Embed生成セクション ---
+        
         embed = discord.Embed(
-            title=f"User Analysis Report: {target}",
-            description=f"ID: `{target.id}`",
-            color=self.stb_blue,
+            title=f"User Analysis: {target.display_name}",
+            color=target.color if target.color != discord.Color.default() else self.stb_blue, # ユーザーカラーがあれば優先
             timestamp=datetime.now()
         )
 
+        # サムネイルと「拡大表示」リンクの作成
         embed.set_thumbnail(url=target.display_avatar.url)
-        if target.desktop_status != discord.Status.offline: embed.set_author(name="Desktop Connected", icon_url="https://www.gstatic.com/images/icons/material/system/2x/desktop_windows_black_24dp.png")
-
-        # セクション：アカウントタイムライン
+        
+        # ユーザー基本情報（IDをここに明記）
         embed.add_field(
-            name="📅 タイムライン",
+            name="🆔 識別データ",
             value=(
-                f"**作成日:** <t:{int(target.created_at.timestamp())}:F> ({created_delta}日前)\n"
-                f"**参加日:** <t:{int(target.joined_at.timestamp())}:F> ({joined_delta}日前)"
+                f"**User ID:** `{target.id}`\n"
+                f"**Mention:** {target.mention}\n"
+                f"**Icon:** [拡大表示・ダウンロード]({target.display_avatar.url})" # ここで拡大リンクを提供
             ),
             inline=False
         )
 
-        # セクション：メンバー属性
+        # ステータス・デバイス・アクティビティ
         embed.add_field(
-            name="👤 属性",
+            name="📡 現在の状況",
             value=(
-                f"**ニックネーム:** {target.display_name}\n"
-                f"**ステータス:** {status_text}\n"
-                f"**バッジ:** {flag_display}\n"
-                f"**ボット:** {'はい' if target.bot else 'いいえ'}"
+                f"**Main Status:** {main_status}\n"
+                f"**Devices:** {client_display}\n"
+                f"**Activities:**\n{activity_display}"
             ),
-            inline=True
-        )
-
-        # セクション：接続デバイス
-        embed.add_field(
-            name="📱 接続環境",
-            value=(
-                f"**モバイル:** {'接続中' if target.is_on_mobile() else '--'}\n"
-                f"**デスクトップ:** {'接続中' if target.desktop_status != discord.Status.offline else '--'}"
-            ),
-            inline=True
-        )
-
-        # セクション：権限・役割
-        embed.add_field(
-            name="🔑 主要権限",
-            value=perm_display,
             inline=False
         )
 
+        # アカウント属性
         embed.add_field(
-            name=f"🎭 保有ロール ({len(role_mentions)})",
-            value=role_display if len(role_display) < 1024 else "ロール数が多すぎるため表示を省略しました。",
+            name="🛡️ アカウント属性",
+            value=(
+                f"**Badges:** {flag_display}\n"
+                f"**Bot:** {'🤖 Yes' if target.bot else '👤 No'}\n"
+                f"**Created:** <t:{int(target.created_at.timestamp())}:D> ({created_delta} days ago)\n"
+                f"**Joined:** <t:{int(target.joined_at.timestamp())}:D> ({joined_delta} days ago)"
+            ),
             inline=False
         )
 
-        # ボイスチャンネル情報（接続中のみ）
-        if target.voice:
-            embed.add_field(
-                name="🔊 ボイスチャンネル",
-                value=f"{target.voice.channel.name} に接続中",
-                inline=False
-            )
+        # ロール
+        embed.add_field(
+            name=f"🎭 保有ロール ({len(roles)-1})", # @everyone分を引く
+            value=role_display if len(role_display) < 1024 else "（多すぎるため省略）",
+            inline=False
+        )
 
         embed.set_footer(text="Rb m/26S User Inspection System • 瑞典技術設計局")
 
-        await interaction.response.send_message(embed=embed)
+        # 結果を送信（編集）
+        await interaction.edit_original_response(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(UserInspector(bot))
