@@ -5,16 +5,16 @@ import asyncio
 import logging
 import traceback
 
-# 1. ログの設定（Actionsのコンソールでエラーを追いやすくする）
+# ログの設定（Actionsの実行ログからエラーを特定しやすくする）
 logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
 logger = logging.getLogger('RbBot')
 
 class RbBot(commands.Bot):
     def __init__(self):
-        # 必要な権限（Intents）の設定
+        # 権限(Intents)の定義
         intents = discord.Intents.default()
-        intents.message_content = True  # メッセージ内容の取得
-        intents.members = True          # メンバー情報の取得
+        intents.message_content = True  # メッセージ読み取り権限
+        intents.members = True          # メンションやロール操作用
         
         super().__init__(
             command_prefix="!", 
@@ -22,62 +22,67 @@ class RbBot(commands.Bot):
             help_command=None
         )
         
-        # 開発拠点：瑞典技術設計局 のギルドID
+        # 開発拠点：瑞典技術設計局 (Guild ID)
         self.dev_guild_id = 1372567395419291698
 
     async def setup_hook(self):
-        """Bot起動時に一度だけ実行される初期設定"""
-        logger.info("--- Starting Cog Loading Sequence ---")
+        """Bot起動時の初期化シーケンス"""
+        logger.info("--- Initializing Systems ---")
         
-        # cogs フォルダ内の Python ファイルを自動的にロード
-        # 将来的に cogs/twitter.py などが増えても自動で認識されます
-        target_cog = "cogs.youtube_monitor"
-        try:
-            await self.load_extension(target_cog)
-            logger.info(f"Successfully loaded extension: {target_cog}")
-        except Exception as e:
-            logger.error(f"Failed to load extension {target_cog}.")
-            traceback.print_exc()
+        # cogsフォルダ内のファイルを自動探索してロード
+        # これにより ping.py や youtube_monitor.py が自動的に読み込まれます
+        cog_dir = "./cogs"
+        if os.path.exists(cog_dir):
+            for filename in os.listdir(cog_dir):
+                if filename.endswith(".py") and not filename.startswith("__"):
+                    cog_name = f"cogs.{filename[:-3]}"
+                    try:
+                        await self.load_extension(cog_name)
+                        logger.info(f"Module Loaded: {cog_name}")
+                    except Exception as e:
+                        logger.error(f"Failed to load {cog_name}: {e}")
+                        traceback.print_exc()
+        else:
+            logger.warning("Warning: 'cogs' directory not found.")
 
-        # スラッシュコマンドの同期設定
+        # スラッシュコマンドの同期
+        # 開発サーバーへの即時反映用
         dev_guild = discord.Object(id=self.dev_guild_id)
-        
-        # 開発サーバーへの即時反映用コピー
         self.tree.copy_global_to(guild=dev_guild)
         await self.tree.sync(guild=dev_guild)
         
-        # 全サーバーへのグローバル同期（反映には時間がかかります）
+        # 全サーバーへのグローバル同期（反映に最大1時間程度）
         await self.tree.sync()
         
-        logger.info(f"Slash commands synced to Guild: {self.dev_guild_id}")
+        logger.info(f"Slash commands synchronized to Dev-Base: {self.dev_guild_id}")
 
     async def on_ready(self):
-        """BotがDiscordに接続した際の処理"""
-        logger.info(f"--- Rb m/26S System Online ---")
+        """オンライン接続時の処理"""
+        logger.info(f"--- Rb m/26S Online ---")
         logger.info(f"Logged in as: {self.user} (ID: {self.user.id})")
-        logger.info(f"Base of Operations: 瑞典技術設計局")
         
-        # 5.5時間 (19,800秒) のタイマーを開始
-        # GitHub Actionsの6時間制限に抵触する前に安全に終了させる
-        logger.info("Cycle timer started: 5.5 hours remaining.")
+        # 5.5時間 (19,800秒) の運用サイクルを開始
+        # GitHub Actionsの制限時間を考慮し、自動でバトンタッチする設計
+        logger.info("Starting 5.5-hour operational cycle...")
         await asyncio.sleep(19800)
         
-        logger.info("Duty cycle completed. Initiating graceful shutdown for rotation...")
+        logger.info("Operational cycle limit reached. Initiating automatic shutdown.")
         await self.close()
 
     async def on_error(self, event, *args, **kwargs):
-        """グローバルエラーハンドリング"""
-        logger.error(f"Event Error: {event}")
+        """システムエラーログ"""
+        logger.error(f"Critical Event Error: {event}")
         traceback.print_exc()
 
 if __name__ == "__main__":
-    bot = RbBot()
+    # 環境変数からトークンを取得
     token = os.getenv("DISCORD_TOKEN")
     
     if token:
+        bot = RbBot()
         try:
             bot.run(token)
         except Exception as e:
-            logger.critical(f"Bot failed to start: {e}")
+            logger.critical(f"System failed to start: {e}")
     else:
-        logger.critical("DISCORD_TOKEN is missing from Environment Variables.")
+        logger.critical("Error: DISCORD_TOKEN is not defined in GitHub Secrets.")
