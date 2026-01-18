@@ -11,7 +11,7 @@ jobs:
   run-periodic-bot:
     runs-on: ubuntu-latest
     
-    # 記憶（last_video_id.txt）をリポジトリに保存するための書き込み権限
+    # 記憶（last_video_id.txt）と設定（config.json）をリポジトリに保存するための書き込み権限
     permissions:
       contents: write
 
@@ -38,17 +38,19 @@ jobs:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
         run: python main.py
 
-      - name: Sync Memory to Repository
-        # プログラム終了後（5.5時間後）、最新の通知済みIDをGitにコミットして保存
+      - name: Sync Memory and Config to Repository
+        # プログラム終了後（5.5時間後）、動画IDと管理者による設定をGitにコミットして保存
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add last_video_id.txt
           
-          # 変更がある場合のみコミットとプッシュを実行
+          # 動画IDと設定ファイルの両方をステージングに追加
+          git add last_video_id.txt config.json
+          
+          # 変更（動画更新 or スラッシュコマンドによる設定変更）がある場合のみコミット
           if ! git diff --cached --exit-code; then
-            git commit -m "docs: sync last video id [skip ci]"
+            git commit -m "docs: sync last video id and config [skip ci]"
             git push
           else
-            echo "No changes in last_video_id.txt. Skipping push."
+            echo "No changes in data files. Skipping push."
           fi
