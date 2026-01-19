@@ -1,65 +1,66 @@
-name: Rb m/26S Non-Stop Monitor
+name: Rb m/26S Strategic Monitor
 
 on:
   schedule:
-    # 5時間ごとに起動 (UTC 0, 5, 10, 15, 20時...)
-    # 日本時間(JST)では 9, 14, 19, 0, 5時... に相当
+    # 5時間ごとにワークフローを再起動 (UTC 0, 5, 10, 15, 20時...)
+    # 常に最新のプロセスで5分間隔の監視を継続させます
     - cron: '0 */5 * * *'
-  workflow_dispatch: # 手動起動用ボタン
+  workflow_dispatch: # 手動で即時起動するためのボタン
 
 jobs:
-  run-periodic-bot:
+  run-monitor:
     runs-on: ubuntu-latest
+    # 5時間の連続稼働を保証しつつ、GitHub側の制限(6時間)の前に安全に終了
+    timeout-minutes: 310 
     
-    # 権限設定: データの自動保存(git push)に必要
     permissions:
-      contents: write
+      contents: write # ログの自動保存に必要
 
     steps:
-      - name: Checkout Code
+      - name: 📦 コードのチェックアウト
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Set up Python
+      - name: 🐍 Python環境の構築 (3.11)
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+          cache: 'pip' # キャッシュを使用して起動速度を向上
 
-      - name: Install Dependencies
+      - name: 🛠️ 依存関係のインストール
         run: |
           python -m pip install --upgrade pip
-          # requirements.txtが存在する場合のみ、一括インストールを実行
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
-            # 予備的なフォールバック（もしファイルが読み込めない場合）
-            pip install discord.py feedparser pytz
+            pip install discord.py feedparser requests
           fi
-          # インストール済みリストを表示（デバッグ用）
-          pip list
 
-      - name: Run Bot
+      - name: 🚀 Rb m/26S 起動 (5時間常駐モード)
         env:
+          # システム稼働に不可欠なSecrets
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
-        # 実行中に万が一エラーが起きても、次の「データ同期」ステップへ進むように設定
-        continue-on-error: true
+          GIST_ID: ${{ secrets.GIST_ID }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          # タイムゾーンを日本に設定（ログ用）
+          TZ: "Asia/Tokyo"
+        # continue-on-error: true により、終了時の git push を確実に実行
+        continue-on-error: true 
         run: python main.py
 
-      - name: Sync Memory and Config to Repository
-        # プログラムが終了した際、最新の状態をリポジトリへ保存
+      - name: 💾 システムログの同期 (Git Push)
+        # ボット終了直前に、そのセッションの活動記録をリポジトリへ保存
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # 存在する可能性のある全データファイルをステージング
-          # ファイルが存在しなくてもエラーにならないように設定
-          git add last_video_id.txt config.json logs/*.log || true
+          # ログファイルや一時データが存在すれば追加
+          git add last_video_id.txt config.json logs/*.log 2>/dev/null || true
           
-          # 変更がある場合のみコミットとプッシュ
           if ! git diff --cached --exit-code; then
-            git commit -m "docs: sync system data and logs [skip ci]"
+            git commit -m "docs: system activity log synchronized [skip ci]"
             git push
           else
-            echo "No changes in data files. Skipping push."
+            echo "No status changes detected. Skipping sync."
           fi
