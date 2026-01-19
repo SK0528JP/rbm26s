@@ -6,12 +6,8 @@ import json
 import os
 import asyncio
 import re
-import logging
+import requests
 from datetime import datetime
-
-# ログ設定
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('Rb_m26S.YouTube')
 
 class YouTubeMonitor(commands.Cog):
     def __init__(self, bot):
@@ -19,156 +15,159 @@ class YouTubeMonitor(commands.Cog):
         self.channel_id = "UC1owxxoNexXWbJ-ri7r5-ww"
         self.rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={self.channel_id}"
         self.yt_red = 0xFF0000 
+        
+        # 外部ストレージ設定 (Mizunori.TDB Persistent Protocol)
+        self.gist_id = os.getenv("GIST_ID")
+        self.gist_token = os.getenv("GIST_TOKEN")
+        self.filename = "rb_m26s_data.json"
 
-        # 実行ファイルの場所を基準にパスを絶対パス化
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.config_path = os.path.join(base_dir, "config.json")
-        self.history_path = os.path.join(base_dir, "last_video_id.txt")
+        # メモリ上のデータ構造（欠落防止用初期値）
+        self.data_cache = {
+            "channel_id": None, 
+            "role_id": None, 
+            "last_video_id": "",
+            "last_updated": ""
+        }
 
         self.monitor_loop.start()
 
     def cog_unload(self):
         self.monitor_loop.cancel()
 
-    def load_config(self):
-        """設定ファイルを安全に読み込みます（型チェック付き）"""
-        if os.path.exists(self.config_path):
-            try:
-                with open(self.config_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    # データの妥当性チェック
-                    if isinstance(data, dict) and data.get("channel_id"):
-                        return data
-            except (json.JSONDecodeError, IOError) as e:
-                logger.error(f"Config Load Error: {e}")
-        return {"channel_id": None, "role_id": None}
+    def sync_gist(self, action="load", new_data=None):
+        """Gist外部メモリとのデータ同期プロトコル"""
+        if not self.gist_id or not self.gist_token:
+            print("[CRITICAL] Rb m/26S Error: Gist credentials missing in Environment Variables.")
+            return self.data_cache
 
-    def save_config(self, channel_id, role_id):
-        """設定を物理ファイルに強制書き込みします"""
+        headers = {
+            "Authorization": f"token {self.gist_token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        url = f"https://api.github.com/gists/{self.gist_id}"
+
         try:
-            data = {
-                "channel_id": str(channel_id),
-                "role_id": str(role_id) if role_id else None
-            }
-            with open(self.config_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4, ensure_ascii=False)
-            return True
-        except IOError as e:
-            logger.error(f"Config Save Error: {e}")
-            return False
+            if action == "load":
+                response = requests.get(url, headers=headers, timeout=15)
+                if response.status_code == 200:
+                    files = response.json().get("files", {})
+                    if self.filename in files:
+                        content = files[self.filename].get("content", "{}")
+                        self.data_cache.update(json.loads(content))
+                        print(f"[INFO] Rb m/26S: Data recovered from Gist.")
+                return self.data_cache
 
-    def get_last_id(self):
-        """履歴ファイルを読み込みます"""
-        if os.path.exists(self.history_path):
-            try:
-                with open(self.history_path, "r", encoding="utf-8") as f:
-                    return f.read().strip()
-            except IOError:
-                return ""
-        return ""
+            elif action == "save" and new_data:
+                self.data_cache.update(new_data)
+                self.data_cache["last_updated"] = datetime.now().isoformat()
+                
+                payload = {
+                    "files": {
+                        self.filename: {
+                            "content": json.dumps(self.data_cache, indent=4, ensure_ascii=False)
+                        }
+                    }
+                }
+                res = requests.patch(url, headers=headers, json=payload, timeout=15)
+                if res.status_code == 200:
+                    print(f"[INFO] Rb m/26S: Persistent memory updated.")
+                else:
+                    print(f"[ERROR] Rb m/26S Sync Failed: {res.status_code}")
 
-    def save_last_id(self, video_id):
-        """最新動画IDを保存します"""
-        try:
-            with open(self.history_path, "w", encoding="utf-8") as f:
-                f.write(str(video_id))
-        except IOError as e:
-            logger.error(f"History Save Error: {e}")
+        except Exception as e:
+            print(f"[ERROR] Rb m/26S Protocol Exception: {e}")
+        
+        return self.data_cache
 
     @tasks.loop(minutes=5)
     async def monitor_loop(self):
-        """Rb m/26S 監視プロトコル：完全耐性ループ"""
+        """YouTube監視・通知・同期の統合サイクル"""
         await self.bot.wait_until_ready()
 
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        logger.info(f"[{now_str}] Initiating RSS Scan...")
+        # 1. ロードプロトコル
+        data = await asyncio.to_thread(self.sync_gist, "load")
+        target_channel_id = data.get("channel_id")
+        last_notified_id = data.get("last_video_id", "")
 
-        config = self.load_config()
-        target_id = config.get("channel_id")
-
-        if not target_id:
-            logger.warning("Monitor Standby: No target channel configured.")
+        if not target_channel_id:
             return
 
         try:
-            # ネットワークエラー対策: タイムアウト付きでRSS取得
-            feed = await asyncio.wait_for(
-                asyncio.to_thread(feedparser.parse, self.rss_url),
-                timeout=30.0
-            )
-            
-            if not feed or not hasattr(feed, 'entries') or len(feed.entries) == 0:
+            # 2. RSSスキャン
+            feed = await asyncio.to_thread(feedparser.parse, self.rss_url)
+            if not feed or not feed.entries:
                 return
 
             latest = feed.entries[0]
-            video_id = latest.get('yt_videoid')
-            if not video_id: return
+            video_id = latest.yt_videoid
+            video_url = latest.link
 
-            last_id = self.get_last_id()
-
-            if video_id != last_id:
-                # チャンネルの解決（キャッシュ -> 取得の2段構え）
-                channel = self.bot.get_channel(int(target_id))
+            # 3. 新着判定
+            if video_id != last_notified_id:
+                channel = self.bot.get_channel(int(target_channel_id))
                 if not channel:
-                    try:
-                        channel = await self.bot.fetch_channel(int(target_id))
-                    except Exception:
-                        logger.error(f"Fatal: Could not resolve channel ID {target_id}")
-                        return
+                    channel = await self.bot.fetch_channel(int(target_channel_id))
 
-                # コンテンツの安全な抽出
-                video_url = latest.get('link', '')
-                video_title = latest.get('title', 'Unknown Title')
-                author_name = latest.get('author', 'YouTube Creator')
-                author_url = latest.author_detail.href if hasattr(latest, 'author_detail') else ""
-                
-                summary = latest.get('summary', "概要はありません。")
-                summary = re.sub('<[^<]+?>', '', summary)
-                summary = (summary[:120] + '...') if len(summary) > 120 else summary
+                # --- 埋め込みメッセージ構築 (Rb m/26S Standard) ---
+                summary = re.sub('<[^<]+?>', '', latest.summary) if hasattr(latest, 'summary') else ""
+                summary = (summary[:110] + '...') if len(summary) > 110 else (summary or "No description.")
 
-                # UI構築
                 embed = discord.Embed(
-                    title=f"📽️ {video_title}",
+                    title=f"📽️ {latest.title}",
                     url=video_url,
                     description=(
-                        f"**{author_name}** が最新映像を公開\n"
+                        f"**{latest.author}** が新しい動画を公開しました\n"
                         f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"**【 概要 】**\n"
                         f"```text\n{summary}\n```"
                     ),
                     color=self.yt_red,
                     timestamp=datetime.now()
                 )
-                embed.set_author(name="YouTube Update", icon_url="https://www.gstatic.com/youtube/img/branding/favicon/favicon_144x144.png")
+                
+                # チャンネルアイコンを動的に取得
+                icon_url = f"https://www.google.com/s2/favicons?sz=128&domain_url={latest.author_detail.href}"
+                embed.set_author(name="YouTube Update", icon_url=icon_url)
                 embed.set_image(url=f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg")
-                embed.set_footer(text="Rb m/26S Broadcaster • Mizunori.TDB", icon_url=self.bot.user.display_avatar.url)
+                embed.set_footer(text="Rb m/26S Broadcaster • Mizunori.TDB")
 
                 view = discord.ui.View()
-                view.add_item(discord.ui.Button(label="視聴する", style=discord.ButtonStyle.link, url=video_url, emoji="▶️"))
+                view.add_item(discord.ui.Button(label="動画を見る", style=discord.ButtonStyle.link, url=video_url, emoji="▶️"))
 
-                role_id = config.get("role_id")
+                role_id = data.get("role_id")
                 mention = f"<@&{role_id}>" if role_id else ""
                 
+                # 送信
                 await channel.send(content=mention, embed=embed, view=view)
-                self.save_last_id(video_id)
-                logger.info(f"Notification Sent: {video_id}")
 
-        except asyncio.TimeoutError:
-            logger.error("RSS Scan Timeout: Connection unstable.")
+                # 4. セーブプロトコル（IDを即座に永続化）
+                await asyncio.to_thread(self.sync_gist, "save", {"last_video_id": video_id})
+
         except Exception as e:
-            logger.error(f"Critical Loop Error: {e}")
+            print(f"[ERROR] Monitor Cycle Aborted: {e}")
 
-    @app_commands.command(name="admin-yt-setup", description="YouTube通知システムを構成します。")
-    @app_commands.describe(channel="通知先のチャンネル", role="メンションするロール（任意）")
+    @app_commands.command(name="admin-yt-setup", description="YouTube通知システムを構成し、Gistとリンクします。")
+    @app_commands.describe(channel="通知先のテキストチャンネル", role="メンションするロール（任意）")
     @app_commands.checks.has_permissions(administrator=True)
     async def setup(self, interaction: discord.Interaction, channel: discord.TextChannel, role: discord.Role = None):
-        """管理用設定プロトコル"""
-        await interaction.response.send_message("🔄 構成を物理メモリに同期中...", ephemeral=True)
+        """管理用：通知システムの永続構成プロトコル"""
+        await interaction.response.send_message("🔄 **Gist Persistence Protocol: 同期中...**", ephemeral=True)
         
-        role_id = role.id if role else None
-        if self.save_config(channel.id, role_id):
+        try:
+            role_id = role.id if role else None
+            # 設定をGistへ強制書き込み
+            new_config = {
+                "channel_id": str(channel.id),
+                "role_id": str(role_id) if role_id else None
+            }
+            await asyncio.to_thread(self.sync_gist, "save", new_config)
+            
             embed = discord.Embed(
-                title="📡 監視プロトコル：リンク完了",
-                description="Rb m/26S 規格に基づき、物理ファイルへの保存と監視を開始しました。",
+                title="📡 監視プロトコル リンク完了",
+                description=(
+                    "YouTube監視システムが正常に構成されました。\n"
+                    "データはGist外部メモリに永続化されています。"
+                ),
                 color=0x2ECC71
             )
             embed.add_field(name="TARGET", value=channel.mention, inline=True)
@@ -177,8 +176,9 @@ class YouTubeMonitor(commands.Cog):
             
             await interaction.edit_original_response(content=None, embed=embed)
             self.monitor_loop.restart()
-        else:
-            await interaction.edit_original_response(content="⚠️ 書き込みエラー：ファイルシステムを確認してください。")
+
+        except Exception as e:
+            await interaction.edit_original_response(content=f"⚠️ 構成失敗: {e}")
 
 async def setup(bot):
     await bot.add_cog(YouTubeMonitor(bot))
