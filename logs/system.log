@@ -1,0 +1,28 @@
+[2026-03-13 05:37:48] [WARNING ] discord.client: PyNaCl is not installed, voice will NOT be supported
+[2026-03-13 05:37:48] [WARNING ] discord.client: davey is not installed, voice will NOT be supported
+[2026-03-13 05:37:48] [CRITICAL] root: Fatal error: 503 Service Unavailable (error code: 0): upstream connect error or disconnect/reset before headers. reset reason: overflow
+Traceback (most recent call last):
+  File "/home/runner/work/rbm26s/rbm26s/main.py", line 112, in <module>
+    asyncio.run(main())
+  File "/opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/asyncio/runners.py", line 190, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/asyncio/base_events.py", line 654, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/home/runner/work/rbm26s/rbm26s/main.py", line 108, in main
+    await bot.start(token)
+  File "/opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/discord/client.py", line 850, in start
+    await self.login(token)
+  File "/opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/discord/client.py", line 679, in login
+    data = await self.http.static_login(token)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/discord/http.py", line 844, in static_login
+    data = await self.request(Route('GET', '/users/@me'))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/discord/http.py", line 776, in request
+    raise DiscordServerError(response, data)
+discord.errors.DiscordServerError: 503 Service Unavailable (error code: 0): upstream connect error or disconnect/reset before headers. reset reason: overflow
