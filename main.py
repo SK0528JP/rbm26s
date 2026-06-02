@@ -114,3 +114,4 @@ if __name__ == '__main__':
         logger.info("System shutdown requested by user.")
     except Exception as e:
         logger.critical(f"Fatal error: {e}", exc_info=True)
+
